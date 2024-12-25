@@ -4,17 +4,26 @@ from docx.enum.section import WD_ORIENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import tempfile
+import os
+import shutil
 
 class PageLayoutProcessor:
     def __init__(self, input_path, output_path):
         self.input_path = input_path
         self.output_path = output_path
+        self.temp_dir = tempfile.mkdtemp()
         
     def process(self):
         """Process the document's page layout"""
         try:
+            # Create a backup of the input file
+            temp_input = os.path.join(self.temp_dir, 'temp_input.docx')
+            shutil.copy2(self.input_path, temp_input)
+            
             # Load the document
-            doc = Document(self.input_path)
+            doc = Document(temp_input)
             
             # Process each section in the document
             for section in doc.sections:
@@ -56,12 +65,95 @@ class PageLayoutProcessor:
             # 8. Set line spacing for all text elements
             self._set_line_spacing(doc)
             
-            # Save the processed document
-            doc.save(self.output_path)
+            # 9. Process images - convert to Picture (U) and center align
+            self._process_images(doc)
+            
+            # Save to temporary file first
+            temp_output = os.path.join(self.temp_dir, 'temp_output.docx')
+            doc.save(temp_output)
+            
+            # Then copy to final destination
+            shutil.copy2(temp_output, self.output_path)
             print(f"Successfully processed document layout: {self.output_path}")
             
         except Exception as e:
             print(f"Error processing document: {str(e)}")
+        finally:
+            self._cleanup_temp_files()
+
+    def _process_images(self, doc):
+        """Process all images in the document - convert to Picture (U) and center align"""
+        try:
+            image_count = 0
+            
+            # Process images in main document body
+            for paragraph in doc.paragraphs:
+                if self._has_image(paragraph):
+                    self._process_paragraph_images(paragraph)
+                    image_count += 1
+                    print(f"Processed image {image_count}")
+            
+            # Process images in tables
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            if self._has_image(paragraph):
+                                self._process_paragraph_images(paragraph)
+                                image_count += 1
+                                print(f"Processed image {image_count}")
+            
+            print(f"Successfully processed {image_count} images")
+        except Exception as e:
+            print(f"Error processing images: {str(e)}")
+
+    def _has_image(self, paragraph):
+        """Check if paragraph contains an image"""
+        try:
+            for run in paragraph.runs:
+                if len(run._element.findall('.//pic:pic', {'pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture'})) > 0:
+                    return True
+            return False
+        except Exception as e:
+            print(f"Error checking for images: {str(e)}")
+            return False
+
+    def _process_paragraph_images(self, paragraph):
+        """Process images in a paragraph while maintaining their position"""
+        try:
+            # Center align the paragraph containing the image
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # Process each run in the paragraph
+            for run in paragraph.runs:
+                # Find all pictures in the run
+                pics = run._element.findall('.//pic:pic', {'pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture'})
+                
+                for pic in pics:
+                    try:
+                        # Get the parent drawing element
+                        drawing = pic.getparent().getparent()
+                        
+                        # Check if it's inline or floating
+                        if drawing.tag.endswith('}inline'):
+                            # For inline images, just ensure paragraph is centered
+                            continue
+                            
+                        elif drawing.tag.endswith('}anchor'):
+                            # For floating images, set position to center
+                            pos_h = drawing.find('.//wp:positionH', {'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'})
+                            if pos_h is not None:
+                                pos_h.set('relativeFrom', 'margin')
+                                align = pos_h.find('.//wp:align', {'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'})
+                                if align is not None:
+                                    align.text = 'center'
+                                
+                    except Exception as e:
+                        print(f"Error processing picture: {str(e)}")
+                        continue
+                        
+        except Exception as e:
+            print(f"Error processing paragraph images: {str(e)}")
 
     def _remove_watermark(self, section):
         """Remove watermark from the document"""
@@ -180,6 +272,15 @@ class PageLayoutProcessor:
             else:
                 spacing[0].set(qn('w:line'), str(int(240 * 1.15)))
                 spacing[0].set(qn('w:lineRule'), 'auto')
+
+    def _cleanup_temp_files(self):
+        """Clean up temporary files and directories"""
+        try:
+            if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+                print("Cleaned up temporary files")
+        except Exception as e:
+            print(f"Error cleaning up temporary files: {str(e)}")
 
 def main():
     # Update these paths according to your file locations
