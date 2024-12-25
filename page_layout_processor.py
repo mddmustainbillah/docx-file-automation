@@ -49,8 +49,11 @@ class PageLayoutProcessor:
 
                 # 6. Check and convert multiple columns to single column
                 self._convert_to_single_column(section)
+                
+                # 7. Remove watermark
+                self._remove_watermark(section)
             
-            # 7. Set line spacing for all text elements
+            # 8. Set line spacing for all text elements
             self._set_line_spacing(doc)
             
             # Save the processed document
@@ -59,6 +62,45 @@ class PageLayoutProcessor:
             
         except Exception as e:
             print(f"Error processing document: {str(e)}")
+
+    def _remove_watermark(self, section):
+        """Remove watermark from the document"""
+        try:
+            # Remove watermark from section properties
+            if hasattr(section._sectPr, 'get_or_add_background'):
+                # Remove background (which might contain watermark)
+                section._sectPr.remove_all('w:background')
+                
+            # Remove any VML drawings (often used for watermarks)
+            try:
+                for child in section._sectPr.findall('.//{urn:schemas-microsoft-com:vml}shape'):
+                    child.getparent().remove(child)
+            except:
+                pass
+                
+            # Remove any picture watermarks
+            try:
+                for child in section._sectPr.findall('.//w:pict'):
+                    child.getparent().remove(child)
+            except:
+                pass
+                
+            # Remove header references that might contain watermarks
+            try:
+                for child in section._sectPr.findall('.//w:headerReference'):
+                    child.getparent().remove(child)
+            except:
+                pass
+                
+            # Remove document background
+            try:
+                section._sectPr.remove_all('w:documentBackground')
+            except:
+                pass
+                
+            print("Successfully removed watermark")
+        except Exception as e:
+            print(f"Error removing watermark: {str(e)}")
 
     def _convert_to_single_column(self, section):
         """Check and convert multiple columns to single column"""
@@ -141,7 +183,7 @@ class PageLayoutProcessor:
 
 def main():
     # Update these paths according to your file locations
-    input_file = "/Users/macbookpro/Desktop/assignment_rokomari/Project eBook Automation/Ebook/90191.docx"
+    input_file = "/Users/macbookpro/Desktop/assignment_rokomari/Project eBook Automation/Ebook/278160.docx"
     output_file = "output.docx"
     
     # Process the document
