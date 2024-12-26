@@ -33,6 +33,12 @@ class PageLayoutProcessor:
             # Process fonts throughout the document
             self._process_fonts(doc)
             
+            # Remove contact details and URLs
+            self._remove_contact_details(doc)
+            
+            # Remove price-related lines
+            self._remove_price_related_lines(doc)
+            
             # Process each section in the document
             for section in doc.sections:
                 # 1. Set orientation to portrait
@@ -195,7 +201,7 @@ class PageLayoutProcessor:
                 # Special characters and modifiers
                 '†', 'Š', '‡', 'ÿ', '¨', '©', '®', '¯', '°', '±', '²', '³', '´', 'µ', '¶', '·', '¸', '¹', 'º', '»', '¼', '½', '¾', '¿',
                 # Additional Bengali characters
-                'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï', 'Ð', 'Ñ', 'Ò', 'Ó', 'Ô', 'Õ', 'Ö', '×', 'Ø', 'Ù', 'Ú', 'Û', 'Ü', 'Ý', 'Þ', 'ß',
+                'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï', 'Ð', '����', 'Ò', 'Ó', 'Ô', 'Õ', 'Ö', '×', 'Ø', 'Ù', 'Ú', 'Û', 'Ü', 'Ý', 'Þ', 'ß',
                 # Common combinations
                 'ww', 'vv', 'šš', '††', '‡‡', 'ii', 'yy'
             }
@@ -471,9 +477,123 @@ class PageLayoutProcessor:
         except Exception as e:
             print(f"Error setting portrait orientation: {str(e)}")
 
+    def _remove_contact_details(self, doc):
+        """Remove contact details and URLs from the document"""
+        try:
+            # Patterns to match
+            patterns = {
+                'phone': r'(?:[\+\d][\d\-\(\) ]{7,}\d)|(?:[\+\d]\d{10})|(?:01\d{9})|(?:\+880\d{10})',  # Phone numbers
+                'url': r'(?:www\.[\w\-\.]+\.(?:com|org|net|bd|edu|gov|info|biz))|(?:https?://[\w\-\.]+\.[\w\-\.]+)',  # URLs
+                'email': r'[\w\-\.]+@[\w\-\.]+\.[\w\-\.]+',  # Email addresses
+                'social': r'(?:facebook\.com|twitter\.com|linkedin\.com|instagram\.com)/[\w\-\.]+',  # Social media
+            }
+            
+            # Function to check if paragraph contains contact info
+            def contains_contact_info(text):
+                for pattern in patterns.values():
+                    if re.search(pattern, text, re.IGNORECASE):
+                        return True
+                return False
+            
+            # Process main document paragraphs
+            paragraphs_to_remove = []
+            for i, paragraph in enumerate(doc.paragraphs):
+                if contains_contact_info(paragraph.text):
+                    paragraphs_to_remove.append(paragraph._element)
+                    print(f"Found contact info to remove: {paragraph.text.strip()}")
+            
+            # Remove marked paragraphs
+            for paragraph_element in paragraphs_to_remove:
+                parent = paragraph_element.getparent()
+                if parent is not None:
+                    parent.remove(paragraph_element)
+            
+            # Process tables
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        paragraphs_to_remove = []
+                        for paragraph in cell.paragraphs:
+                            if contains_contact_info(paragraph.text):
+                                paragraphs_to_remove.append(paragraph._element)
+                                print(f"Found contact info to remove in table: {paragraph.text.strip()}")
+                        
+                        # Remove marked paragraphs from cell
+                        for paragraph_element in paragraphs_to_remove:
+                            parent = paragraph_element.getparent()
+                            if parent is not None:
+                                parent.remove(paragraph_element)
+            
+            print("Successfully removed contact details and URLs")
+        except Exception as e:
+            print(f"Error removing contact details: {str(e)}")
+
+    def _remove_price_related_lines(self, doc):
+        """Remove price-related lines from the document"""
+        try:
+            # Patterns to match price-related text in Bengali (SutonnyMJ encoding) and English
+            price_patterns = [
+                r'মূল্য\s*[:।].*',  # মূল্য followed by : or । and any text
+                r'g~j¨\s*[:।].*',  # মূল্য in SutonnyMJ
+                r'দাম\s*[:।].*',   # দাম followed by : or । and any text
+                r'`vg\s*[:।].*',   # দাম in SutonnyMJ
+                r'টাকা\s*মাত্র',    # টাকা মাত্র
+                r'UvKv\s*gvÎ',     # টাকা মাত্র in SutonnyMJ
+                r'মূল্যঃ',         # মূল্যঃ
+                r'g~j¨t',         # মূল্যঃ in SutonnyMJ
+                r'Price\s*:.*',   # Price: in English
+                r'\d+\s*টাকা',     # Number followed by টাকা
+                r'\d+\s*UvKv',    # Number followed by টাকা in SutonnyMJ
+                r'Taka\s*:.*',    # Taka: in English
+                r'TK\s*\.?\s*\d+', # TK followed by number
+                r'Tk\s*\.?\s*\d+', # Tk followed by number
+                r'৳\s*\d+',       # Bengali Taka symbol followed by number
+                r'\.{3,}\s*\d+\s*(?:টাকা|UvKv|Taka|TK|Tk)?', # Dots followed by price
+            ]
+            
+            # Compile patterns
+            patterns = [re.compile(pattern, re.IGNORECASE) for pattern in price_patterns]
+            
+            # Function to check if text contains price-related information
+            def contains_price_info(text):
+                return any(pattern.search(text) for pattern in patterns)
+            
+            # Process main document paragraphs
+            paragraphs_to_remove = []
+            for paragraph in doc.paragraphs:
+                if contains_price_info(paragraph.text):
+                    paragraphs_to_remove.append(paragraph._element)
+                    print(f"Found price-related text to remove: {paragraph.text.strip()}")
+            
+            # Remove marked paragraphs
+            for paragraph_element in paragraphs_to_remove:
+                parent = paragraph_element.getparent()
+                if parent is not None:
+                    parent.remove(paragraph_element)
+            
+            # Process tables
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        paragraphs_to_remove = []
+                        for paragraph in cell.paragraphs:
+                            if contains_price_info(paragraph.text):
+                                paragraphs_to_remove.append(paragraph._element)
+                                print(f"Found price-related text to remove in table: {paragraph.text.strip()}")
+                        
+                        # Remove marked paragraphs from cell
+                        for paragraph_element in paragraphs_to_remove:
+                            parent = paragraph_element.getparent()
+                            if parent is not None:
+                                parent.remove(paragraph_element)
+            
+            print("Successfully removed price-related lines")
+        except Exception as e:
+            print(f"Error removing price-related lines: {str(e)}")
+
 def main():
     # Update these paths according to your file locations
-    input_file = "/Users/macbookpro/Desktop/assignment_rokomari/Project eBook Automation/Ebook/278160.docx"
+    input_file = "/Users/macbookpro/Desktop/assignment_rokomari/Project eBook Automation/Ebook/90191.docx"
     output_file = "output.docx"
     
     # Process the document
