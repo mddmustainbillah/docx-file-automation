@@ -8,12 +8,14 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import tempfile
 import os
 import shutil
+import regex as re
 
 class PageLayoutProcessor:
     def __init__(self, input_path, output_path):
         self.input_path = input_path
         self.output_path = output_path
         self.temp_dir = tempfile.mkdtemp()
+        self.uses_nirmala_ui = False
         
     def process(self):
         """Process the document's page layout"""
@@ -25,10 +27,16 @@ class PageLayoutProcessor:
             # Load the document
             doc = Document(temp_input)
             
+            # Check if document uses Nirmala UI
+            self._check_for_nirmala_ui(doc)
+            
+            # Process fonts throughout the document
+            self._process_fonts(doc)
+            
             # Process each section in the document
             for section in doc.sections:
                 # 1. Set orientation to portrait
-                section.orientation = WD_ORIENT.PORTRAIT
+                self._set_portrait_orientation(section)
                 
                 # 2. Set all margins to 1 inch
                 section.left_margin = Inches(1)
@@ -80,6 +88,161 @@ class PageLayoutProcessor:
             print(f"Error processing document: {str(e)}")
         finally:
             self._cleanup_temp_files()
+
+    def _check_for_nirmala_ui(self, doc):
+        """Check if document uses Nirmala UI font"""
+        try:
+            for paragraph in doc.paragraphs:
+                for run in paragraph.runs:
+                    if run.font.name == 'Nirmala UI':
+                        self.uses_nirmala_ui = True
+                        print("Document uses Nirmala UI font, will use Kalpurush for Bengali and English")
+                        return
+                        
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                if run.font.name == 'Nirmala UI':
+                                    self.uses_nirmala_ui = True
+                                    print("Document uses Nirmala UI font, will use Kalpurush for Bengali and English")
+                                    return
+        except Exception as e:
+            print(f"Error checking for Nirmala UI: {str(e)}")
+
+    def _process_fonts(self, doc):
+        """Process fonts throughout the document"""
+        try:
+            # Process main document paragraphs
+            for paragraph in doc.paragraphs:
+                self._process_paragraph_fonts(paragraph)
+            
+            # Process tables
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            self._process_paragraph_fonts(paragraph)
+            
+            print("Successfully processed fonts")
+        except Exception as e:
+            print(f"Error processing fonts: {str(e)}")
+
+    def _process_paragraph_fonts(self, paragraph):
+        """Process fonts in a paragraph"""
+        try:
+            for run in paragraph.runs:
+                if not run.text.strip():  # Skip empty runs
+                    continue
+                    
+                script_type = self._detect_script(run.text)
+                current_font = run.font.name if run.font.name else ''
+                
+                # Print debugging information
+                print(f"Text: {run.text[:20]}...")
+                print(f"Detected script: {script_type}")
+                print(f"Current font: {current_font}")
+                
+                # Case 1: If document uses Nirmala UI
+                if self.uses_nirmala_ui:
+                    if script_type in ['bengali', 'english']:
+                        if current_font != 'Kalpurush':
+                            run.font.name = 'Kalpurush'
+                            print(f"Converted '{run.text[:20]}...' from {current_font} to Kalpurush (Nirmala UI case)")
+                    elif script_type == 'arabic':
+                        if current_font.lower() not in ['al majeed quranic', 'almajeedquranic']:
+                            run.font.name = 'Al Majeed Quranic'
+                            print(f"Converted Arabic text '{run.text[:20]}...' from {current_font} to Al Majeed Quranic")
+                
+                # Case 2: Normal case - only change if font doesn't match requirements
+                else:
+                    # For Bengali text
+                    if script_type == 'bengali':
+                        if current_font.lower() not in ['sutonnymj', 'sutonny mj']:
+                            run.font.name = 'SutonnyMJ'
+                            print(f"Converted Bengali text '{run.text[:20]}...' from {current_font} to SutonnyMJ")
+                        else:
+                            print(f"Keeping existing SutonnyMJ font for: {run.text[:20]}...")
+                    
+                    # For English text
+                    elif script_type == 'english':
+                        if current_font.lower() not in ['times new roman', 'timesnewroman']:
+                            run.font.name = 'Times New Roman'
+                            print(f"Converted English text '{run.text[:20]}...' from {current_font} to Times New Roman")
+                        else:
+                            print(f"Keeping existing Times New Roman font for: {run.text[:20]}...")
+                    
+                    # For Arabic text
+                    elif script_type == 'arabic':
+                        if current_font.lower() not in ['al majeed quranic', 'almajeedquranic']:
+                            run.font.name = 'Al Majeed Quranic'
+                            print(f"Converted Arabic text '{run.text[:20]}...' from {current_font} to Al Majeed Quranic")
+                        else:
+                            print(f"Keeping existing Al Majeed Quranic font for: {run.text[:20]}...")
+                
+        except Exception as e:
+            print(f"Error processing paragraph fonts: {str(e)}")
+
+    def _detect_script(self, text):
+        """Detect the script type of the text"""
+        try:
+            # Common SutonnyMJ Bengali characters and combinations
+            sutonnymj_chars = {
+                # Basic Bengali characters in SutonnyMJ
+                'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+                'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+                # Special characters and modifiers
+                '†', 'Š', '‡', 'ÿ', '¨', '©', '®', '¯', '°', '±', '²', '³', '´', 'µ', '¶', '·', '¸', '¹', 'º', '»', '¼', '½', '¾', '¿',
+                # Additional Bengali characters
+                'È', 'É', 'Ê', 'Ë', 'Ì', 'Í', 'Î', 'Ï', 'Ð', 'Ñ', 'Ò', 'Ó', 'Ô', 'Õ', 'Ö', '×', 'Ø', 'Ù', 'Ú', 'Û', 'Ü', 'Ý', 'Þ', 'ß',
+                # Common combinations
+                'ww', 'vv', 'šš', '††', '‡‡', 'ii', 'yy'
+            }
+            
+            # Count SutonnyMJ Bengali characters in the text
+            bengali_char_count = sum(1 for char in text if char in sutonnymj_chars)
+            total_length = len(text.strip())
+            
+            # If text is empty, return english
+            if total_length == 0:
+                return 'english'
+            
+            # Calculate percentage of Bengali characters
+            bengali_percentage = (bengali_char_count / total_length) * 100
+            
+            # Check for common SutonnyMJ patterns
+            has_bengali_markers = any(marker in text for marker in ['†', 'Š', '‡', 'ÿ', '©', '®'])
+            
+            # If text has Bengali markers or significant Bengali characters, consider it Bengali
+            if has_bengali_markers or bengali_percentage > 10:
+                return 'bengali'
+            
+            # Check for Unicode Bengali (fallback)
+            bengali_unicode = re.compile(r'[\u0980-\u09FF\u200C\u200D]')
+            if bengali_unicode.search(text):
+                return 'bengali'
+            
+            # Check for Arabic
+            arabic_pattern = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]')
+            if arabic_pattern.search(text):
+                return 'arabic'
+            
+            # Check if the text looks like pure English
+            english_pattern = re.compile(r'^[a-zA-Z0-9\s\.,!?\'\"()-]*$')
+            if english_pattern.match(text):
+                return 'english'
+            
+            # If we still have some Bengali characters, consider it Bengali
+            if bengali_char_count > 0:
+                return 'bengali'
+            
+            # Default to English if nothing else matches
+            return 'english'
+            
+        except Exception as e:
+            print(f"Error detecting script: {str(e)}")
+            return 'english'  # Default to English on error
 
     def _process_images(self, doc):
         """Process all images in the document - convert to Picture (U) and center align"""
@@ -281,6 +444,32 @@ class PageLayoutProcessor:
                 print("Cleaned up temporary files")
         except Exception as e:
             print(f"Error cleaning up temporary files: {str(e)}")
+
+    def _set_portrait_orientation(self, section):
+        """Set section orientation to portrait"""
+        try:
+            # Get section properties
+            section_properties = section._sectPr
+            
+            # Create or get page size element
+            page_size = section_properties.xpath('./w:pgSz')
+            if not page_size:
+                page_size = OxmlElement('w:pgSz')
+                section_properties.append(page_size)
+            else:
+                page_size = page_size[0]
+            
+            # Set orientation to portrait
+            page_size.set(qn('w:orient'), 'portrait')
+            
+            # Set standard page width and height for portrait (in twips)
+            # A4 in portrait: 8.3 x 11.7 inches (or 11906 x 16838 twips)
+            page_size.set(qn('w:w'), '11906')
+            page_size.set(qn('w:h'), '16838')
+            
+            print("Set orientation to portrait")
+        except Exception as e:
+            print(f"Error setting portrait orientation: {str(e)}")
 
 def main():
     # Update these paths according to your file locations
