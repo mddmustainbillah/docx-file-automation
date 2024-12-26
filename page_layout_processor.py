@@ -482,47 +482,132 @@ class PageLayoutProcessor:
         try:
             # Patterns to match
             patterns = {
-                'phone': r'(?:[\+\d][\d\-\(\) ]{7,}\d)|(?:[\+\d]\d{10})|(?:01\d{9})|(?:\+880\d{10})',  # Phone numbers
-                'url': r'(?:www\.[\w\-\.]+\.(?:com|org|net|bd|edu|gov|info|biz))|(?:https?://[\w\-\.]+\.[\w\-\.]+)',  # URLs
-                'email': r'[\w\-\.]+@[\w\-\.]+\.[\w\-\.]+',  # Email addresses
-                'social': r'(?:facebook\.com|twitter\.com|linkedin\.com|instagram\.com)/[\w\-\.]+',  # Social media
+                'phone': [
+                    # Bangladesh mobile numbers (11 digits)
+                    r'(?<!\d)01\d{3}[-\s]?\d{6}(?!\d)',  # 01XXX-XXXXXX
+                    r'(?<!\d)01\d{2}[-\s]?\d{7}(?!\d)',  # 01XX-XXXXXXX
+                    r'(?<!\d)01\d{1}[-\s]?\d{8}(?!\d)',  # 01X-XXXXXXXX
+                    r'(?<!\d)01\d{9}(?!\d)',             # 01XXXXXXXXX
+                    
+                    # Hyphenated formats
+                    r'(?<!\d)01\d{3}[-]\d{3}[-]\d{3}(?!\d)',  # 01XXX-XXX-XXX
+                    r'(?<!\d)01\d{2}[-]\d{3}[-]\d{4}(?!\d)',  # 01XX-XXX-XXXX
+                    r'(?<!\d)01\d{4}[-]\d{6}(?!\d)',          # 01XXXX-XXXXXX
+                    
+                    # With country code
+                    r'(?<!\d)\+8801\d{9}(?!\d)',              # +8801XXXXXXXXX
+                    r'(?<!\d)8801\d{9}(?!\d)',                # 8801XXXXXXXXX
+                    
+                    # Bengali digits (০১, ০২, etc.)
+                    r'(?<!\d)[০১]\d{4}[-\s]?[০-৯\d]{6}(?!\d)',
+                    r'(?<!\d)[০১][০-৯\d]{9}(?!\d)',
+                    r'(?<!\d)[+৮৮][০১][০-৯\d]{9}(?!\d)',
+                    
+                    # With labels (both English and Bengali)
+                    r'(?:Phone|Mobile|Contact|Tel|Call|ফোন|মোবাইল|কল|যোগাযোগ)[\s\:]+[\+\d\-\s০-৯]{8,}',
+                    
+                    # Specific format like your example
+                    r'(?<!\d)0\d{4}[-]0?\d{5,6}(?!\d)',      # 01568-069216
+                    
+                    # General mobile number patterns
+                    r'(?<!\d)(?:013|014|015|016|017|018|019)\d{8}(?!\d)',
+                    r'(?<!\d)(?:০১৩|০১৪|০১৫|০১৬|০১৭|০১৮|০১৯)[০-৯]{8}(?!\d)'
+                ],
+                'url': r'(?:https?://|www\.)\S+\.(?:com|org|net|bd|edu|gov|info|biz)',
+                'email': r'[\w\-\.]+@[\w\-\.]+\.[a-zA-Z]{2,}',
+                'social': r'(?:facebook\.com|fb\.com|twitter\.com|linkedin\.com|instagram\.com)/[\w\-\.]+',
+                'whatsapp': r'(?:whatsapp|viber|imo)[\s\:]+\d[\d\-\s]{9,}'
             }
             
-            # Function to check if paragraph contains contact info
+            # Function to check if text is a date
+            def is_date(text):
+                date_patterns = [
+                    r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}',  # DD/MM/YYYY or similar
+                    r'\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}',
+                    r'\d{4}[-/]\d{1,2}[-/]\d{1,2}',  # YYYY/MM/DD or similar
+                    r'(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}'  # Year first date format
+                ]
+                return any(re.search(pattern, text, re.IGNORECASE) for pattern in date_patterns)
+            
+            # Function to check if text is ISBN
+            def is_isbn(text):
+                isbn_patterns = [
+                    r'ISBN\s*[:।-]?\s*(?:\d+[- ]?){4,}',  # ISBN followed by digits
+                    r'ISBN\s*\d*\s*[:।-]?\s*(?:\d+[- ]?){4,}',  # ISBN with optional number
+                    r'(?:\d{3}-\d{3}-\d{4}-\d{2}-\d{1})',  # 13-digit ISBN format
+                    r'(?:\d{3}-\d{1}-\d{4}-\d{4}-\d{1})'   # Alternative ISBN format
+                ]
+                return any(re.search(pattern, text, re.IGNORECASE) for pattern in isbn_patterns)
+            
+            # Function to check if text is a reference number
+            def is_reference_number(text):
+                ref_patterns = [
+                    r'No\.\s*\d+/[A-Z]+/\d+/\d+',  # Common reference number format
+                    r'[A-Z]+/\d+/[A-Z]+/\d+'  # Alternative reference format
+                ]
+                return any(re.search(pattern, text) for pattern in ref_patterns)
+            
+            # Function to check if text contains contact info
             def contains_contact_info(text):
-                for pattern in patterns.values():
-                    if re.search(pattern, text, re.IGNORECASE):
+                if is_isbn(text) or is_date(text) or is_reference_number(text):
+                    return False
+                    
+                for pattern_list in patterns.values():
+                    if isinstance(pattern_list, list):
+                        for pattern in pattern_list:
+                            if re.search(pattern, text, re.IGNORECASE):
+                                return True
+                    elif re.search(pattern_list, text, re.IGNORECASE):
                         return True
                 return False
             
-            # Process main document paragraphs
-            paragraphs_to_remove = []
-            for i, paragraph in enumerate(doc.paragraphs):
-                if contains_contact_info(paragraph.text):
-                    paragraphs_to_remove.append(paragraph._element)
-                    print(f"Found contact info to remove: {paragraph.text.strip()}")
+            # Function to remove only contact info from text while preserving other content
+            def remove_contact_info(paragraph):
+                if any(is_isbn(run.text) or is_date(run.text) or is_reference_number(run.text) for run in paragraph.runs):
+                    return False
+                    
+                has_changes = False
+                for run in paragraph.runs:
+                    if is_isbn(run.text) or is_date(run.text) or is_reference_number(run.text):
+                        continue
+                        
+                    new_text = run.text
+                    for pattern_list in patterns.values():
+                        if isinstance(pattern_list, list):
+                            for pattern in pattern_list:
+                                matches = list(re.finditer(pattern, new_text, re.IGNORECASE))
+                                if matches:
+                                    has_changes = True
+                                    for match in reversed(matches):
+                                        start, end = match.span()
+                                        new_text = new_text[:start] + new_text[end:]
+                        else:
+                            matches = list(re.finditer(pattern_list, new_text, re.IGNORECASE))
+                            if matches:
+                                has_changes = True
+                                for match in reversed(matches):
+                                    start, end = match.span()
+                                    new_text = new_text[:start] + new_text[end:]
+                    
+                    if has_changes:
+                        run.text = new_text.strip()
+                
+                return has_changes
             
-            # Remove marked paragraphs
-            for paragraph_element in paragraphs_to_remove:
-                parent = paragraph_element.getparent()
-                if parent is not None:
-                    parent.remove(paragraph_element)
+            # Process main document paragraphs
+            for paragraph in doc.paragraphs:
+                if contains_contact_info(paragraph.text):
+                    print(f"Processing paragraph with contact info: {paragraph.text.strip()}")
+                    remove_contact_info(paragraph)
             
             # Process tables
             for table in doc.tables:
                 for row in table.rows:
                     for cell in row.cells:
-                        paragraphs_to_remove = []
                         for paragraph in cell.paragraphs:
                             if contains_contact_info(paragraph.text):
-                                paragraphs_to_remove.append(paragraph._element)
-                                print(f"Found contact info to remove in table: {paragraph.text.strip()}")
-                        
-                        # Remove marked paragraphs from cell
-                        for paragraph_element in paragraphs_to_remove:
-                            parent = paragraph_element.getparent()
-                            if parent is not None:
-                                parent.remove(paragraph_element)
+                                print(f"Processing table cell with contact info: {paragraph.text.strip()}")
+                                remove_contact_info(paragraph)
             
             print("Successfully removed contact details and URLs")
         except Exception as e:
@@ -533,29 +618,39 @@ class PageLayoutProcessor:
         try:
             # Patterns to match price-related text in Bengali (SutonnyMJ encoding) and English
             price_patterns = [
-                r'মূল্য\s*[:।].*',  # মূল্য followed by : or । and any text
-                r'g~j¨\s*[:।].*',  # মূল্য in SutonnyMJ
-                r'দাম\s*[:।].*',   # দাম followed by : or । and any text
-                r'`vg\s*[:।].*',   # দাম in SutonnyMJ
-                r'টাকা\s*মাত্র',    # টাকা মাত্র
-                r'UvKv\s*gvÎ',     # টাকা মাত্র in SutonnyMJ
-                r'মূল্যঃ',         # মূল্যঃ
-                r'g~j¨t',         # মূল্যঃ in SutonnyMJ
-                r'Price\s*:.*',   # Price: in English
-                r'\d+\s*টাকা',     # Number followed by টাকা
-                r'\d+\s*UvKv',    # Number followed by টাকা in SutonnyMJ
-                r'Taka\s*:.*',    # Taka: in English
-                r'TK\s*\.?\s*\d+', # TK followed by number
-                r'Tk\s*\.?\s*\d+', # Tk followed by number
-                r'৳\s*\d+',       # Bengali Taka symbol followed by number
-                r'\.{3,}\s*\d+\s*(?:টাকা|UvKv|Taka|TK|Tk)?', # Dots followed by price
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)মূল্য\s*[:।].*',  # মূল্য followed by : or । and any text
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)g~j¨\s*[:।].*',  # মূল্য in SutonnyMJ
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)দাম\s*[:।].*',   # দাম followed by : or । and any text
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)`vg\s*[:।].*',   # দাম in SutonnyMJ
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)টাকা\s*মাত্র',    # টাকা মাত্র
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)UvKv\s*gvÎ',     # টাকা মাত্র in SutonnyMJ
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)মূল্যঃ',         # মূল্যঃ
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)g~j¨t',         # মূল্যঃ in SutonnyMJ
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)Price\s*:(?!.*ISBN).*',   # Price: in English
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)\d+\s*টাকা(?!\s*ISBN)',     # Number followed by টাকা
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)\d+\s*UvKv(?!\s*ISBN)',    # Number followed by টাকা in SutonnyMJ
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)Taka\s*:(?!.*ISBN).*',    # Taka: in English
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)(?:TK|Tk)\s*\.?\s*\d+(?!\s*ISBN)', # TK/Tk followed by number
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)৳\s*\d+(?!\s*ISBN)',       # Bengali Taka symbol followed by number
+                r'(?<!ISBN\s*[:।-]\s*)(?<!ISBN\s*\d*\s*[:।-]\s*)\.{3,}\s*\d+\s*(?:টাকা|UvKv|Taka|TK|Tk)?(?!\s*ISBN)', # Dots followed by price
             ]
+            
+            # Function to check if text is ISBN
+            def is_isbn(text):
+                isbn_patterns = [
+                    r'ISBN\s*[:।-]?\s*\d[\d\-]*',
+                    r'ISBN\s*[:।-]?\s*\d[\d\s\-]*\d',
+                    r'ISBN\s*\d*\s*[:।-]?\s*\d[\d\-]*'
+                ]
+                return any(re.search(pattern, text, re.IGNORECASE) for pattern in isbn_patterns)
             
             # Compile patterns
             patterns = [re.compile(pattern, re.IGNORECASE) for pattern in price_patterns]
             
             # Function to check if text contains price-related information
             def contains_price_info(text):
+                if is_isbn(text):  # Skip if text contains ISBN
+                    return False
                 return any(pattern.search(text) for pattern in patterns)
             
             # Process main document paragraphs
